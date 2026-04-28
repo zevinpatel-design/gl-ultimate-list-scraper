@@ -113,8 +113,9 @@
   }
 
   function findScrollableParent(el) {
+    // Walk up to 50 levels — modern SPAs (VDB, etc.) nest deeper than 10.
     let current = el;
-    for (let i = 0; i < 10 && current; i++) {
+    for (let i = 0; i < 50 && current; i++) {
       if (isScrollable(current)) return current;
       current = current.parentElement;
     }
@@ -123,10 +124,145 @@
 
   function isScrollable(el) {
     if (!el) return false;
+    if (el === document.documentElement || el === document.body) {
+      // Document-level scroll: covered separately by findScrollContext().
+      return false;
+    }
     const style = window.getComputedStyle(el);
     const overflowY = style.overflowY;
-    const isScrollableOverflow = overflowY === 'auto' || overflowY === 'scroll';
-    return isScrollableOverflow && el.scrollHeight > el.clientHeight + 20;
+    const overflowYScrollable = overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'overlay';
+    return overflowYScrollable && el.scrollHeight > el.clientHeight + 4;
+  }
+
+  // Returns a uniform handle for the scroll container — works for both
+  // ordinary scrollable elements AND document/window-level scrolling, which
+  // the v1.0/1.1.0 code couldn't tell apart.
+  function findScrollContext(el) {
+    // 1. Element-level: el itself is scrollable
+    if (isScrollable(el)) return makeElementContext(el);
+
+    // 2. An ancestor element is scrollable
+    const parent = findScrollableParent(el);
+    if (parent) return makeElementContext(parent);
+
+    // 3. Document/window scrolls (most regular pages, including Google search,
+    //    long blog posts, and many SPAs that don't use a custom scroll pane).
+    if (document.documentElement.scrollHeight > window.innerHeight + 4) {
+      return makeWindowContext();
+    }
+
+    // 4. Nothing scrolls — fall back to document anyway so the caller can
+    //    still run extraction on the selected element without erroring.
+    return makeWindowContext();
+  }
+
+  function makeElementContext(el) {
+    return {
+      kind: 'element',
+      el,
+      get scrollTop() { return el.scrollTop; },
+      get scrollHeight() { return el.scrollHeight; },
+      get clientHeight() { return el.clientHeight; },
+      scrollBy(dy) {
+        // Use 'auto' (instant) — 'smooth' returns immediately while the scroll
+        // is still in flight, which races against the position-stable check.
+        el.scrollBy({ top: dy, behavior: 'auto' });
+      },
+    };
+  }
+
+  function makeWindowContext() {
+    const docEl = document.documentElement;
+    return {
+      kind: 'window',
+      el: docEl,
+      get scrollTop() {
+        return window.scrollY || docEl.scrollTop || document.body.scrollTop || 0;
+      },
+      get scrollHeight() {
+        return Math.max(
+          docEl.scrollHeight, document.body.scrollHeight,
+          docEl.offsetHeight, document.body.offsetHeight,
+          docEl.clientHeight
+        );
+      },
+      get clientHeight() {
+        return window.innerHeight;
+      },
+      scrollBy(dy) {
+        window.scrollBy({ top: dy, behavior: 'auto' });
+      },
+    };
+  }
+
+  // Re-acquire `state.selectedElement` on demand — returns the live DOM node
+  // the user originally selected, even after a page reload or SPA re-render
+  // detached the previous reference. Returns null if the selector no longer
+  // matches anything visible.
+  function reacquireSelection() {
+    if (state.selectedElement && document.body.contains(state.selectedElement)) {
+      return state.selectedElement;
+    }
+    return new Promise((resolve) => {
+      chrome.storage.local.get('ule_selected').then((stored) => {
+        const selector = stored && stored.ule_selected;
+        if (!selector) { resolve(null); return; }
+
+        const candidate = querySelectorFromDescription(selector);
+        if (candidate) {
+          state.selectedElement = candidate;
+          resolve(candidate);
+        } else {
+          resolve(null);
+        }
+      }).catch(() => resolve(null));
+    });
+  }
+
+  // The describeElement format is `tag#id.cls1.cls2`. Build a CSS selector
+  // and try variants in case the element's classes have changed slightly.
+  function querySelectorFromDescription(desc) {
+    if (!desc) return null;
+    const tryQuery = (sel) => {
+      try { return document.querySelector(sel); } catch (_) { return null; }
+    };
+    // Exact match first
+    let hit = tryQuery(desc);
+    if (hit) return hit;
+    // Drop classes one at a time
+    const parts = desc.split('.');
+    while (parts.length > 1) {
+      parts.pop();
+      hit = tryQuery(parts.join('.'));
+      if (hit) return hit;
+    }
+    // Tag + id only
+    const tagOnly = desc.split('#')[0];
+    if (tagOnly && tagOnly !== desc) {
+      hit = tryQuery(tagOnly);
+      if (hit) return hit;
+    }
+    return null;
+  }
+
+  // Wait for the next animation frame so a programmatic scroll commits before
+  // we read the new scroll position. Two RAFs ≈ 33 ms guarantees layout has
+  // applied even when the page is under heavy paint load.
+  function nextFrame() {
+    return new Promise((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(resolve));
+    });
+  }
+
+  // Append a scroll-debug entry to chrome.storage.local for ZP to inspect when
+  // a teammate reports trouble. Capped at 80 entries (rolling).
+  function logScrollEvent(entry) {
+    chrome.storage.local.get('ule_scroll_debug').then((stored) => {
+      const buf = (stored && stored.ule_scroll_debug) || [];
+      buf.push({ at: Date.now(), ...entry });
+      while (buf.length > 80) buf.shift();
+      chrome.storage.local.set({ ule_scroll_debug: buf }).catch(() => {});
+    }).catch(() => {});
   }
 
   function describeElement(el) {
@@ -162,25 +298,66 @@
   }
 
   async function startScrolling(speed) {
-    if (!state.selectedElement) return;
+    // Re-acquire the selection if the in-memory ref is stale (page reload or
+    // SPA re-render detached it). The popup's UI may say "Selected" based on
+    // chrome.storage.local, but our state is fresh on each content-script
+    // injection — so we resolve from the stored selector when needed.
+    const target = await reacquireSelection();
+    if (!target) {
+      safeSend({
+        action: 'scrollError',
+        errorCode: 'no_selection',
+        message: 'Selection lost. Click "Re-select" on the page and try again.',
+      });
+      logScrollEvent({ phase: 'start', ok: false, errorCode: 'no_selection' });
+      return;
+    }
+    state.selectedElement = target;
 
     state.scrolling = true;
     await saveToStorage({ ule_scrolling: true, ule_data: null });
 
     const config = SPEED_CONFIG[speed] || SPEED_CONFIG.medium;
-    const el = state.selectedElement;
+    const ctx = findScrollContext(target);
 
-    // Determine scroll target
-    const scrollTarget = isScrollable(el) ? el : findScrollableParent(el) || document.documentElement;
+    logScrollEvent({
+      phase: 'start',
+      ok: true,
+      contextKind: ctx.kind,
+      speed,
+      url: location.href,
+      initialScrollTop: ctx.scrollTop,
+      scrollHeight: ctx.scrollHeight,
+      clientHeight: ctx.clientHeight,
+    });
 
     const maxScrollAttempts = 5000;
     let lastScrollTop = -1;
     let noChangeCount = 0;
     let scrollCount = 0;
+    let lastObservedHeight = ctx.scrollHeight;
+    let activeCtx = ctx;
 
     while (state.scrolling && scrollCount < maxScrollAttempts) {
-      const currentScroll = scrollTarget.scrollTop;
-      const maxScroll = scrollTarget.scrollHeight - scrollTarget.clientHeight;
+      // Detached-element guard: if the SPA re-rendered the container under us,
+      // re-acquire and rebuild the scroll context. (window-level context is
+      // never detached.)
+      if (activeCtx.kind === 'element' && !document.body.contains(activeCtx.el)) {
+        logScrollEvent({ phase: 'detached_recovery', scrollCount });
+        const reacquired = await reacquireSelection();
+        if (reacquired) {
+          state.selectedElement = reacquired;
+          activeCtx = findScrollContext(reacquired);
+          lastObservedHeight = activeCtx.scrollHeight;
+          lastScrollTop = -1;
+          noChangeCount = 0;
+        } else {
+          break;
+        }
+      }
+
+      const currentScroll = activeCtx.scrollTop;
+      const maxScroll = Math.max(0, activeCtx.scrollHeight - activeCtx.clientHeight);
 
       const percent = maxScroll > 0 ? Math.min(100, Math.round((currentScroll / maxScroll) * 100)) : 100;
       safeSend({
@@ -188,6 +365,14 @@
         percent,
         message: `Scrolling… ${percent}% (${scrollCount} steps)`,
       });
+
+      // If we appear stuck, give lazy-loaded pages a chance to grow the
+      // scrollHeight before we declare done. We watch for height growth across
+      // iterations — if growth happens, we reset noChangeCount.
+      if (activeCtx.scrollHeight > lastObservedHeight + 1) {
+        noChangeCount = 0;
+        lastObservedHeight = activeCtx.scrollHeight;
+      }
 
       if (currentScroll >= maxScroll - 5) {
         noChangeCount++;
@@ -197,13 +382,27 @@
         noChangeCount = 0;
       }
 
-      if (noChangeCount > 8) break;
+      if (noChangeCount > 8) {
+        logScrollEvent({
+          phase: 'end',
+          reason: 'stable',
+          scrollCount,
+          finalScrollTop: currentScroll,
+          finalScrollHeight: activeCtx.scrollHeight,
+        });
+        break;
+      }
 
       lastScrollTop = currentScroll;
 
       const step = config.scrollStep + randomBetween(-50, 50);
-      scrollTarget.scrollBy({ top: step, behavior: 'smooth' });
+      activeCtx.scrollBy(step);
 
+      // Wait one paint frame so the scroll commits, then the configured
+      // human-like delay. Without the RAF wait, the next iteration reads
+      // scrollTop while the position hasn't yet been laid out, which used
+      // to falsely increment noChangeCount and exit early at "Fast" speed.
+      await nextFrame();
       await sleep(humanDelay(config));
 
       if (Math.random() < config.pauseChance) {
@@ -220,11 +419,17 @@
 
     state.scrolling = false;
 
-    // Extract data after scrolling
-    const data = extractListData(state.selectedElement);
+    // Extract from the live element (re-acquire one last time defensively).
+    const finalTarget = await reacquireSelection();
+    const data = extractListData(finalTarget || state.selectedElement);
 
-    // Persist results
     await saveToStorage({ ule_scrolling: false, ule_data: data });
+
+    logScrollEvent({
+      phase: 'complete',
+      scrollCount,
+      itemsExtracted: (data && data.rows && data.rows.length) || 0,
+    });
 
     safeSend({ action: 'scrollComplete', data });
   }

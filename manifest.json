@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Ultimate List Extractor",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Extract scrollable lists from any webpage. Select a list container, auto-scroll to capture all items, and export to CSV, Excel, or PDF.",
   "homepage_url": "https://github.com/zevinpatel-design/gl-ultimate-list-scraper",
   "permissions": [

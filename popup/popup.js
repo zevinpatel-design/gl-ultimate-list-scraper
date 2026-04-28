@@ -468,6 +468,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     renderPreview(msg.data);
   }
 
+  if (msg.action === 'scrollError') {
+    $('#btn-scroll').classList.remove('hidden');
+    $('#btn-stop').classList.add('hidden');
+    $('#scroll-progress').classList.add('hidden');
+    $('#scroll-status').textContent = msg.message || 'Scrolling could not start.';
+    if (msg.errorCode === 'no_selection') {
+      // Selection ref was stale and re-acquire failed — guide back to step 1.
+      $('#selected-info').classList.add('hidden');
+      $('#step-scroll').classList.add('hidden');
+      setSelectButtonLabel('Re-select Area');
+      $('#btn-select').disabled = false;
+    }
+  }
+
   return true;
 });
 

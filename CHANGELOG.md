@@ -5,6 +5,22 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning: [S
 
 The release CI (`.github/workflows/release.yml`) reads the section matching the pushed tag (e.g. `v1.2.0` matches `## [1.2.0]`) and prepends a `SHA256:` line for the in-extension integrity check.
 
+## [1.1.1] - 2026-04-29
+
+### Fixed
+- **Scroller no longer fails silently after page reload.** Before: clicking *Start Scrolling* did nothing if the page had reloaded since selection — `state.selectedElement` was null but the popup UI thought selection persisted (it lives in `chrome.storage.local`). Now the content script re-acquires the live DOM node from the stored selector on each `startScroll`, and surfaces a clear "Selection lost — please re-select" message if it can't.
+- **Scroller no longer exits early at "Fast" speed.** Before: `scrollBy({ behavior: 'smooth' })` returned immediately while the scroll was still in flight, the next loop iteration read `scrollTop` mid-transit, saw the same value as last time, incremented `noChangeCount`, and exited after 8 false stuck-reads — sometimes capturing only the first ~10% of a list. Now the scroller uses `behavior: 'auto'` (instant) and waits one paint frame before reading the new position. Position reads are stable; the early-exit heuristic is sound again.
+- **Scroller now handles document/window-level scrolling.** Before: if the user clicked an element with no `overflow-y: auto` parent within 10 levels, the scroller fell back to `document.documentElement` and called `scrollBy` on it — which works on some pages but not when `body` is the actual scroll target. Now there's a unified `findScrollContext()` helper that returns either an element-scroll handle or a window-scroll handle, with a 50-level parent walk and a final document-level fallback that reads from `window.scrollY` and writes via `window.scrollBy`.
+- **Scroller now survives SPA re-renders that detach the selected container.** Before: many list-heavy SPAs (including VDB) re-render the list during scroll, detaching the original element from the DOM. The old code kept calling `scrollTop` on the detached node — always 0 — and exited early. Now there's a per-iteration `document.body.contains(...)` check; on detachment, the scroller re-acquires from storage and rebuilds the scroll context.
+- **Scroller now waits out lazy-loading.** Before: when scroll position stalled near the bottom, the scroller exited within 8 iterations even if more items were loading. Now we also watch for `scrollHeight` growth across iterations and reset the stuck-counter on growth — giving lazy-loaders time to land.
+
+### Added
+- `chrome.storage.local.ule_scroll_debug` — rotating 80-entry log of scroll start/recovery/end events for troubleshooting. Open the service worker DevTools and run `chrome.storage.local.get('ule_scroll_debug').then(r => console.table(r.ule_scroll_debug))` to inspect.
+- `scrollError` message from content script → popup (with `errorCode: 'no_selection'` etc.) so the user sees a clear status message when scrolling can't start, instead of the prior silent-no-op behaviour.
+
+### Notes
+- v1.1.0 is the version teammates need to be on for the in-extension Update flow to deliver this patch automatically. Anyone still on v1.0.0 will need to download v1.1.1 manually from the release page.
+
 ## [1.1.0] - 2026-04-29
 
 ### Added
