@@ -3,9 +3,7 @@
 All notable changes to the Ultimate List Extractor are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning: [SemVer](https://semver.org/spec/v2.0.0.html).
 
-> Each release entry contains a `SHA256:` line below the changelog text. The in-extension Update flow reads that line and verifies the downloaded ZIP matches it before saving. The line is auto-prepended by the release CI on tag push.
-
-## [Unreleased]
+The release CI (`.github/workflows/release.yml`) reads the section matching the pushed tag (e.g. `v1.2.0` matches `## [1.2.0]`) and prepends a `SHA256:` line for the in-extension integrity check.
 
 ## [1.1.0] - 2026-04-29
 

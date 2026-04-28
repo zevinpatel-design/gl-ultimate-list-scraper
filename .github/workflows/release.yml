@@ -44,11 +44,26 @@ jobs:
 
       - name: Extract changelog section
         id: changelog
-        uses: mindsers/changelog-reader-action@v2
-        with:
-          version: ${{ github.ref_name }}
-          path: ./CHANGELOG.md
-        continue-on-error: true
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          VERSION="${REF_NAME#v}"
+          # Extract the section starting with "## [VERSION]" up to (but not including) the next "## [" heading.
+          BODY=$(awk -v v="$VERSION" '
+            $0 ~ "^## \\[" v "\\]" { found=1; next }
+            found && /^## \[/ { found=0 }
+            found { print }
+          ' CHANGELOG.md)
+          if [ -z "$BODY" ]; then
+            echo "No CHANGELOG.md entry found for version $VERSION"
+            echo "changes=" >> "$GITHUB_OUTPUT"
+          else
+            {
+              echo 'changes<<CHANGELOG_EOF'
+              printf '%s\n' "$BODY"
+              echo 'CHANGELOG_EOF'
+            } >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Compose release body
         id: body
