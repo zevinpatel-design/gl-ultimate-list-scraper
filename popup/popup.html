@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ultimate List Extractor</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="title-row">
+        <h1>List Extractor</h1>
+        <button id="update-pill" class="pill hidden" type="button" title="Update available">
+          Update <span id="update-pill-version"></span>
+        </button>
+      </div>
+      <p class="subtitle">Select &middot; Scroll &middot; Export</p>
+    </header>
+
+    <!-- Just-updated toast (one-shot, on first popup after a successful apply) -->
+    <div id="updated-toast" class="toast hidden">
+      <span class="toast-check">&#10003;</span>
+      Updated to v<span id="updated-toast-version"></span>
+      <button id="updated-toast-close" class="toast-close" type="button" aria-label="Dismiss">&times;</button>
+    </div>
+
+    <!-- Apply-failed hint (shown if reload didn't pick up new files) -->
+    <div id="apply-failed" class="alert hidden">
+      <strong>Replace didn&rsquo;t take.</strong>
+      The Apply step ran but the version on disk didn&rsquo;t change.
+      Check that you replaced the contents of your extension folder, then try again.
+      <button id="apply-failed-dismiss" class="link-btn" type="button">Dismiss</button>
+    </div>
+
+    <!-- Cross-profile drift hint -->
+    <div id="profile-drift" class="alert hidden">
+      <strong>Files updated by another Chrome profile.</strong>
+      Reload this profile&rsquo;s extension at <code>chrome://extensions</code> to pick up the new version.
+      <button id="profile-drift-dismiss" class="link-btn" type="button">Dismiss</button>
+    </div>
+
+    <!-- Step 1: Select list container -->
+    <section id="step-select" class="step active">
+      <div class="step-header">
+        <span class="step-num">1</span>
+        <span class="step-label">Select List Container</span>
+      </div>
+      <p class="step-desc">Click the button below. The popup will close so you can click on the scrollable list area. Then re-open the extension to continue.</p>
+      <button id="btn-select" class="btn btn-primary">
+        <span class="btn-icon">&#9678;</span> Select Area
+      </button>
+      <div id="selected-info" class="info-box hidden">
+        <span class="info-tag">Selected:</span>
+        <span id="selected-element"></span>
+      </div>
+    </section>
+
+    <!-- Step 2: Configure & Scroll -->
+    <section id="step-scroll" class="step hidden">
+      <div class="step-header">
+        <span class="step-num">2</span>
+        <span class="step-label">Auto-Scroll &amp; Capture</span>
+      </div>
+      <div class="config-row">
+        <label for="scroll-speed">Scroll Speed</label>
+        <select id="scroll-speed">
+          <option value="slow">Slow (stealth)</option>
+          <option value="medium" selected>Medium</option>
+          <option value="fast">Fast</option>
+        </select>
+      </div>
+      <button id="btn-scroll" class="btn btn-primary">
+        <span class="btn-icon">&#9660;</span> Start Scrolling
+      </button>
+      <button id="btn-stop" class="btn btn-danger hidden">
+        <span class="btn-icon">&#9632;</span> Stop
+      </button>
+      <div id="scroll-progress" class="progress-bar hidden">
+        <div id="scroll-progress-fill" class="progress-fill"></div>
+      </div>
+      <div id="scroll-status" class="status-text"></div>
+    </section>
+
+    <!-- Step 3: Export -->
+    <section id="step-export" class="step hidden">
+      <div class="step-header">
+        <span class="step-num">3</span>
+        <span class="step-label">Export Data</span>
+      </div>
+      <div id="data-summary" class="info-box">
+        <span id="item-count">0</span> items captured
+      </div>
+      <div id="preview-container" class="preview hidden">
+        <table id="preview-table">
+          <thead id="preview-head"></thead>
+          <tbody id="preview-body"></tbody>
+        </table>
+      </div>
+      <div class="export-buttons">
+        <button id="btn-csv" class="btn btn-export">CSV</button>
+        <button id="btn-xlsx" class="btn btn-export">Excel</button>
+        <button id="btn-pdf" class="btn btn-export">PDF</button>
+      </div>
+    </section>
+
+    <!-- Reset -->
+    <button id="btn-reset" class="btn btn-secondary hidden">
+      &#8635; Start Over
+    </button>
+
+    <!-- About / Settings panel (always present, collapsed by default) -->
+    <details id="about-panel" class="about">
+      <summary>About</summary>
+      <dl class="about-grid">
+        <dt>Version</dt>           <dd id="about-version">&mdash;</dd>
+        <dt>Last checked</dt>      <dd id="about-checked">&mdash;</dd>
+        <dt>Distribution</dt>      <dd id="about-channel">GitHub (unpacked)</dd>
+        <dt>Install path</dt>      <dd>
+          <input id="install-path-input" type="text" placeholder="/path/to/extension folder (optional)" />
+        </dd>
+      </dl>
+      <div class="about-actions">
+        <button id="btn-check-now" class="btn btn-secondary" type="button">Check for Updates</button>
+        <a id="repo-link" class="link-btn" target="_blank" rel="noopener">View on GitHub &rarr;</a>
+      </div>
+      <div id="about-recent" class="about-log hidden">
+        <div class="about-log-title">Recent activity</div>
+        <ul id="about-log-list"></ul>
+      </div>
+    </details>
+  </div>
+
+  <!-- Update modal: three-step apply flow -->
+  <div id="update-modal" class="modal hidden" role="dialog" aria-labelledby="update-modal-title">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2 id="update-modal-title">Update to v<span id="modal-version"></span></h2>
+        <button id="modal-close" class="modal-close" type="button" aria-label="Close">&times;</button>
+      </div>
+
+      <ol class="modal-steps">
+        <li id="modal-step-A" class="modal-step active">
+          <div class="modal-step-num">A</div>
+          <div class="modal-step-body">
+            <div class="modal-step-title">Download</div>
+            <p class="modal-step-desc">We&rsquo;ll fetch the new version from GitHub and verify it.</p>
+            <div id="modal-download-status" class="status-text">Ready to download.</div>
+            <div id="modal-download-progress" class="progress-bar hidden">
+              <div id="modal-download-fill" class="progress-fill"></div>
+            </div>
+            <button id="btn-download-update" class="btn btn-primary" type="button">
+              Download Update
+            </button>
+          </div>
+        </li>
+
+        <li id="modal-step-B" class="modal-step">
+          <div class="modal-step-num">B</div>
+          <div class="modal-step-body">
+            <div class="modal-step-title">Replace files</div>
+            <p class="modal-step-desc">
+              The ZIP saved to your <strong>Downloads</strong> folder as <code>ultimate-scraper-update.zip</code>.
+              Extract it and replace the contents of your extension folder.
+            </p>
+            <div id="modal-platform-help" class="modal-platform-help"></div>
+            <div id="modal-path-row" class="modal-path-row hidden">
+              Replace contents of: <code id="modal-path-display"></code>
+            </div>
+            <a id="modal-help-link" class="link-btn" target="_blank" rel="noopener">Show me how (with screenshots) &rarr;</a>
+          </div>
+        </li>
+
+        <li id="modal-step-C" class="modal-step">
+          <div class="modal-step-num">C</div>
+          <div class="modal-step-body">
+            <div class="modal-step-title">Apply</div>
+            <p class="modal-step-desc">
+              Once you&rsquo;ve replaced the files, click Apply to reload the extension on the new version.
+              This will close any in-progress scrape, so save your work first.
+            </p>
+            <button id="btn-apply-update" class="btn btn-primary" type="button">
+              Apply Update
+            </button>
+          </div>
+        </li>
+      </ol>
+
+      <div id="modal-error" class="modal-error hidden"></div>
+    </div>
+  </div>
+
+  <script src="update.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

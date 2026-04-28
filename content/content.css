@@ -1,0 +1,24 @@
+/* Highlight overlay for element selection */
+.ule-highlight {
+  outline: 2px solid #2563eb !important;
+  outline-offset: -2px;
+  background: rgba(37, 99, 235, 0.08) !important;
+  cursor: crosshair !important;
+  transition: outline-color 0.15s, background 0.15s;
+}
+
+.ule-highlight:hover {
+  outline-color: #3b82f6 !important;
+  background: rgba(37, 99, 235, 0.15) !important;
+}
+
+.ule-selected {
+  outline: 2px solid #22c55e !important;
+  outline-offset: -2px;
+  background: rgba(34, 197, 94, 0.06) !important;
+}
+
+/* Selection mode cursor overlay */
+.ule-selection-mode * {
+  cursor: crosshair !important;
+}

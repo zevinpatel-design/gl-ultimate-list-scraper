@@ -1,0 +1,21 @@
+# macOS / Windows clutter
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs and editor cruft
+*.log
+.vscode/
+.idea/
+*.swp
+*~
+
+# Build artifacts
+*.zip
+node_modules/
+ule-update*/
+
+# Local-only secrets (no current need, defensive)
+.env
+.env.*
+*.pem

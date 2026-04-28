@@ -1,0 +1,53 @@
+# Chrome Web Store auto-publish stub.
+#
+# Status: DISABLED. Rename this file to `webstore.yml` to enable.
+#
+# Prerequisites before enabling:
+#   1. Create a Chrome Web Store developer account ($5 one-time fee).
+#   2. Submit the extension as Unlisted (only people with the share link can install).
+#   3. Generate API credentials following:
+#      https://developer.chrome.com/docs/webstore/using_webstore_api/
+#   4. Add the following GitHub repo secrets:
+#        - CWS_CLIENT_ID
+#        - CWS_CLIENT_SECRET
+#        - CWS_REFRESH_TOKEN
+#        - CWS_EXTENSION_ID
+#   5. Add a `key` field to manifest.json (extracted from the first Web Store
+#      upload) so the extension ID is locked across unpacked and Web Store installs.
+#      This preserves chrome.storage.local data across the migration.
+#   6. Rename this file: mv webstore.yml.disabled webstore.yml
+
+name: webstore-publish
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build extension ZIP
+        env:
+          REF_NAME: ${{ github.event.release.tag_name }}
+        run: |
+          chmod +x scripts/build.sh
+          ./scripts/build.sh "ultimate-scraper-${REF_NAME}.zip"
+
+      - name: Upload to Chrome Web Store
+        uses: mubaidr/action-chrome-webstore-publish@v1
+        env:
+          REF_NAME: ${{ github.event.release.tag_name }}
+        with:
+          file-path: ultimate-scraper-${{ github.event.release.tag_name }}.zip
+          extension-id: ${{ secrets.CWS_EXTENSION_ID }}
+          client-id: ${{ secrets.CWS_CLIENT_ID }}
+          client-secret: ${{ secrets.CWS_CLIENT_SECRET }}
+          refresh-token: ${{ secrets.CWS_REFRESH_TOKEN }}
+          publish: true
