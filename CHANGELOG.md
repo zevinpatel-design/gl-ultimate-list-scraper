@@ -25,8 +25,6 @@ The release CI (`.github/workflows/release.yml`) reads the section matching the 
 - The update flow can detect, download, and apply new versions on the user's command — but Chrome cannot replace the unpacked extension folder on disk for you. The modal walks through the brief manual step (Windows: PowerShell snippet provided; macOS: Terminal snippet provided).
 - For true silent auto-updates, watch for v1.3.0 — the extension will be published to the Chrome Web Store as Unlisted.
 
-SHA256: (auto-prepended by release CI on tag push)
-
 ## [1.0.0] - 2026-04-09
 
 ### Added
